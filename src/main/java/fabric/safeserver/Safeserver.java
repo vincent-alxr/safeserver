@@ -2,25 +2,31 @@ package fabric.safeserver;
 
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
+import fabric.safeserver.event.ServerSendMessageEvents;
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.event.lifecycle.v1.CommonLifecycleEvents;
+import net.fabricmc.fabric.api.client.message.v1.ClientSendMessageEvents;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
+import net.fabricmc.fabric.mixin.client.message.ClientPlayNetworkHandlerMixin;
+import net.minecraft.client.network.ClientPlayNetworkHandler;
+import net.minecraft.network.listener.ServerPlayPacketListener;
 import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.command.ServerCommandSource;
+import net.minecraft.server.network.ServerPlayNetworkHandler;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.GameMode;
+import net.minecraft.network.packet.c2s.play.*;
 
 import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Properties;
-import java.util.UUID;
+import java.util.*;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,6 +41,25 @@ public class Safeserver implements ModInitializer {
 
 	@Override
 	public void onInitialize() {
+		ServerSendMessageEvents.ALLOW_CHAT.register((player, message) -> {
+			if (this.loggedInPlayers.containsKey(player.getUuid())) {
+				return this.loggedInPlayers.get(player.getUuid());
+			}
+
+			return false;
+		});
+		ServerSendMessageEvents.ALLOW_COMMAND.register((player, command) -> {
+			String[] commandChain = command.split(" ");
+			if (Objects.equals(commandChain[0], "setPassword") || Objects.equals(commandChain[0], "login")) {
+				return true;
+			}
+
+			if (this.loggedInPlayers.containsKey(player.getUuid())) {
+				return this.loggedInPlayers.get(player.getUuid());
+			}
+
+			return false;
+		});
 		loadPasswordProperties();
 		registerCommands();
 		registerPlayerEvents();
@@ -100,12 +125,6 @@ public class Safeserver implements ModInitializer {
 
 	private void handleServerTick(ServerPlayerEntity player) {
 		UUID playerId = player.getUuid();
-		if (!loggedInPlayers.getOrDefault(playerId, false)) {
-			Vec3d joinPos = playerJoinPositions.get(playerId);
-			if (joinPos != null) {
-				teleportPlayerToJoinPosition(player, joinPos);
-			}
-		}
 	}
 
 	private void registerSetPasswordCommand(CommandDispatcher<ServerCommandSource> dispatcher) {
